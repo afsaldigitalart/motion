@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../pass32"
+		},
+		{
+			"name": "motion",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

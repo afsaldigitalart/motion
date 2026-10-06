@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STM32 Motion Camera</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="wrap">
+
+    <header>
+      <h1>STM32 MOTION CAMERA</h1>
+      <p id="online" class="online">🟢 SYSTEM ONLINE</p>
+    </header>
+
+    <section class="card">
+      <div id="status" class="pill grey">⚪ CONNECTING…</div>
+
+      <h2>LATEST CAPTURE</h2>
+      <div id="frame" class="frame">
+        <img id="latest" alt="Latest capture" hidden>
+        <div id="placeholder" class="placeholder">No capture yet</div>
+      </div>
+
+      <dl class="meta">
+        <div>
+          <dt>Last motion</dt>
+          <dd id="lastMotion">—</dd>
+        </div>
+        <div>
+          <dt>Motion events</dt>
+          <dd id="count">0</dd>
+        </div>
+      </dl>
+
+      <p id="message" class="message">Waiting for motion...</p>
+    </section>
+
+    <section id="recentCard" class="card" hidden>
+      <h2>RECENT CAPTURES</h2>
+      <div id="recent" class="thumbs"></div>
+    </section>
+
+    <footer>
+      Local network only. Images stay on the laptop running <code>app.py</code>.
+    </footer>
+  </main>
+
+  <script>
+    // ---- elements ---------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const el = {
+      online: $("online"), status: $("status"), frame: $("frame"),
+      img: $("latest"), placeholder: $("placeholder"),
+      lastMotion: $("lastMotion"), count: $("count"), message: $("message"),
+      recentCard: $("recentCard"), recent: $("recent"),
+    };
+
+    const POLL_MS = 1000;
+    const EMOJI = { green: "🟢", red: "🔴", orange: "🟠", yellow: "🟡", grey: "⚪" };
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    let shownVersion = 0;      // image_version currently displayed
+    let firstPoll = true;      // don't play the "new image" animation on page load
+    let recentKey = "";
+    let busy = false;
+
+    // "2026-10-01 20:51:32" -> "01 Oct 2026 20:51:32"
+    function prettyTime(s) {
+      if (!s) return "—";
+      const [d, t] = s.split(" ");
+      const [y, m, day] = d.split("-");
+      return `${day} ${MONTHS[parseInt(m, 10) - 1]} ${y} ${t}`;
+    }
+
+    function setStatus(text, level) {
+      el.status.textContent = `${EMOJI[level] || "⚪"} ${text}`;
+      el.status.className = `pill ${level}`;
+    }
+
+    function flash() {
+      el.frame.classList.remove("flash");
+      void el.frame.offsetWidth;          // restart the CSS animation
+      el.frame.classList.add("flash");
+    }
+
+    // Load the new image in the background, then swap it in (no blank flicker).
+    function showImage(version, animate) {
+      const url = "/latest?t=" + version;  // timestamp query bypasses browser cache
+      const probe = new Image();
+      probe.onload = () => {
+        el.img.src = url;
+        el.img.hidden = false;
+        el.placeholder.hidden = true;
+        if (animate) flash();
+      };
+      probe.src = url;
+    }
+
+    function renderRecent(list) {
+      const key = list.join("|");
+      if (key === recentKey) return;
+      recentKey = key;
+      el.recent.innerHTML = "";
+      el.recentCard.hidden = list.length === 0;
+      list.forEach((name) => {
+        const a = document.createElement("a");
+        a.href = "/captures/" + encodeURIComponent(name);
+        a.target = "_blank";
+        a.rel = "noopener";
+        const im = document.createElement("img");
+        im.src = a.href;
+        im.loading = "lazy";
+        im.alt = name;
+        a.appendChild(im);
+        el.recent.appendChild(a);
+      });
+    }
+
+    function render(s) {
+      el.online.textContent = "🟢 SYSTEM ONLINE";
+      el.online.className = "online";
+      setStatus(s.status, s.level);
+
+      el.lastMotion.textContent = prettyTime(s.last_motion);
+      el.count.textContent = s.motion_count;
+
+      if (s.image_version && s.image_version !== shownVersion) {
+        shownVersion = s.image_version;
+        showImage(shownVersion, !firstPoll);
+      }
+      renderRecent(s.recent || []);
+
+      // message under the picture
+      if (s.motion_detected && s.last_motion) {
+        el.message.textContent = "Motion detected! Captured: " + s.last_motion.split(" ")[1];
+        el.message.className = "message alert";
+      } else {
+        el.message.className = "message";
+        if (!s.stm32_connected) el.message.textContent = "STM32 not connected — check the USB-TTL cable and the board's power.";
+        else if (s.pir_warming_up) el.message.textContent = "PIR is warming up — please wait…";
+        else if (!s.camera_ok) el.message.textContent = "Webcam problem — is another app using it?";
+        else el.message.textContent = "Waiting for motion...";
+      }
+      firstPoll = false;
+    }
+
+    async function poll() {
+      if (busy) return;
+      busy = true;
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        render(await res.json());
+      } catch (err) {
+        el.online.textContent = "🔴 SERVER UNREACHABLE";
+        el.online.className = "online bad";
+        setStatus("NO CONNECTION", "grey");
+      } finally {
+        busy = false;
+      }
+    }
+
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>
